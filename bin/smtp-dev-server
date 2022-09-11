@@ -1,0 +1,66 @@
+#!/usr/bin/env php
+<?php
+
+use Camelot\SmtpDevServer\Server;
+use Monolog\Handler\StreamHandler;
+use Monolog\Level;
+use Monolog\Logger;
+use Symfony\Component\Console\Descriptor\TextDescriptor;
+use Symfony\Component\Console\Input\ArgvInput;
+use Symfony\Component\Console\Input\InputDefinition;
+use Symfony\Component\Console\Input\InputOption;
+use Symfony\Component\Console\Output\ConsoleOutput;
+use Symfony\Component\Console\Style\SymfonyStyle;
+
+$run = function (): void {
+    if (is_file(dirname(__DIR__) . '/vendor/autoload.php')) {
+        require_once dirname(__DIR__) . '/vendor/autoload.php';
+        $logDir = dirname(__DIR__) . '/var/log/smtp.log';
+    } elseif (is_file(dirname(__DIR__, 3) . '/autoload.php')) {
+        require_once dirname(__DIR__, 3) . '/autoload.php';
+        $logDir = dirname(__DIR__, 3) . '/var/log/smtp.log';
+    } else {
+        throw new LogicException('Composer autoload is missing. Try running "composer install".');
+    }
+
+    $inputDefinition = new InputDefinition();
+    $inputDefinition->addOption(new InputOption('ip', 'i', InputOption::VALUE_REQUIRED, 'TCP/IP address', '127.0.0.1'));
+    $inputDefinition->addOption(new InputOption('port', 'p', InputOption::VALUE_REQUIRED, 'Port', 2525));
+    $inputDefinition->addOption(new InputOption('help', 'h', InputOption::VALUE_NONE, 'Show help'));
+
+    $input = new ArgvInput(null, $inputDefinition);
+    $output = new ConsoleOutput();
+    $io = new SymfonyStyle($input, $output);
+
+    if ($input->getOption('help')) {
+        $io->writeln(
+            <<<'EOF'
+
+                The <info>smtp-dev-server</info> command runs a "fake" SMTP server for development testing needs.
+
+                EOF
+        );
+        $descriptor = new TextDescriptor();
+        $descriptor->describe($output, $inputDefinition);
+        $io->writeln(PHP_EOL);
+
+        return;
+    }
+
+    $host = $input->getOption('ip');
+    $port = $input->getOption('port');
+
+    $io->title("Starting SMTP server on {$host} {$port}");
+
+    $logger = new Logger('smtp');
+    $logger->pushHandler(new StreamHandler($logDir, Level::Debug));
+    $server = new Server($host, $port, $logger);
+    $server->start();
+    $io->info('Waiting for connections');
+
+    $server->listen(function ($clientId, $message) use ($io): void {
+        $io->writeln(trim($message));
+    });
+};
+
+$run();

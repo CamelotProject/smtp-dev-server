@@ -27,7 +27,7 @@ final class Server
     /** @var SmtpSocket[] */
     private array $sockets = [];
 
-    public function __construct(string $host, int $port = 2525, LoggerInterface $logger = null)
+    public function __construct(string $host = 'localhost', int $port = 2525, LoggerInterface $logger = null)
     {
         if (!str_contains($host, '://')) {
             $host = 'tcp://' . $host . ($port ? ':' . $port : '');

@@ -20,3 +20,22 @@ $ composer require --dev camelot/smtp-dev-server
 
 Use
 ---
+
+To start the server, simply run:
+
+```console
+$ vendor/bin/smtp-dev-server
+```
+
+This will output all incoming request data to STDOUT.
+
+**NOTE:** Currently the server will also log transactions to `./var/log/smtp.log`
+
+Options
+-------
+
+```
+  -i, --ip=IP      TCP/IP address [default: "127.0.0.1"]
+  -p, --port=PORT  Port [default: 2525]
+  -h, --help       Show help
+```

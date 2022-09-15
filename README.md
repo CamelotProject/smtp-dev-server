@@ -31,8 +31,13 @@ This will output all incoming request data to STDOUT.
 
 **NOTE:** Currently the server will also log transactions to `./var/log/smtp.log`
 
-Options
--------
+### Arguments
+
+```
+  backing          Storage type (null, memory, mailbox) [default: "mailbox"]
+```
+
+### Options
 
 ```
   -i, --ip=IP      TCP/IP address [default: "127.0.0.1"]

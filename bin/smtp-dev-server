@@ -1,29 +1,36 @@
 #!/usr/bin/env php
 <?php
 
+use Camelot\SmtpDevServer\Event\MessageEventListener;
 use Camelot\SmtpDevServer\Server;
+use Camelot\SmtpDevServer\Storage\MailboxStorage;
+use Camelot\SmtpDevServer\Storage\MemoryStorage;
+use Camelot\SmtpDevServer\Storage\NullStorage;
 use Monolog\Handler\StreamHandler;
 use Monolog\Level;
 use Monolog\Logger;
 use Symfony\Component\Console\Descriptor\TextDescriptor;
 use Symfony\Component\Console\Input\ArgvInput;
+use Symfony\Component\Console\Input\InputArgument;
 use Symfony\Component\Console\Input\InputDefinition;
 use Symfony\Component\Console\Input\InputOption;
 use Symfony\Component\Console\Output\ConsoleOutput;
 use Symfony\Component\Console\Style\SymfonyStyle;
+use Symfony\Component\EventDispatcher\EventDispatcher;
 
 $run = function (): void {
     if (is_file(dirname(__DIR__) . '/vendor/autoload.php')) {
-        require_once dirname(__DIR__) . '/vendor/autoload.php';
-        $logDir = dirname(__DIR__) . '/var/log/smtp.log';
+        $baseDir = dirname(__DIR__);
+        require_once $baseDir . '/vendor/autoload.php';
     } elseif (is_file(dirname(__DIR__, 3) . '/autoload.php')) {
-        require_once dirname(__DIR__, 3) . '/autoload.php';
-        $logDir = dirname(__DIR__, 3) . '/var/log/smtp.log';
+        $baseDir = dirname(__DIR__, 3);
+        require_once $baseDir . '/autoload.php';
     } else {
         throw new LogicException('Composer autoload is missing. Try running "composer install".');
     }
 
     $inputDefinition = new InputDefinition();
+    $inputDefinition->addArgument(new InputArgument('backing', InputOption::VALUE_REQUIRED, 'Storage type (null, memory, mailbox)', 'mailbox'));
     $inputDefinition->addOption(new InputOption('ip', 'i', InputOption::VALUE_REQUIRED, 'TCP/IP address', '127.0.0.1'));
     $inputDefinition->addOption(new InputOption('port', 'p', InputOption::VALUE_REQUIRED, 'Port', 2525));
     $inputDefinition->addOption(new InputOption('help', 'h', InputOption::VALUE_NONE, 'Show help'));
@@ -49,18 +56,24 @@ $run = function (): void {
 
     $host = $input->getOption('ip');
     $port = $input->getOption('port');
+    $storage = match ($input->getArgument('backing')) {
+        'null' => new NullStorage(),
+        'memory' => new MemoryStorage(),
+        default => new MailboxStorage($baseDir . '/var/spool'),
+    };
 
-    $io->title("Starting SMTP server on {$host} {$port}");
+    $io->title('Starting SMTP server');
+    $io->listing(["Host:\t{$host}", "Port:\t{$port}", "Storage:\t" . $storage::class]);
 
+    $dispatcher = new EventDispatcher();
+    $dispatcher->addSubscriber(new MessageEventListener($storage));
     $logger = new Logger('smtp');
-    $logger->pushHandler(new StreamHandler($logDir, Level::Debug));
-    $server = new Server($host, $port, $logger);
-    $server->start();
+    $logger->pushHandler(new StreamHandler("{$baseDir}/var/log/smtp.log", Level::Debug));
+    $server = new Server($host, $port, $dispatcher, $logger);
+    $server->start($output);
     $io->info('Waiting for connections');
 
-    $server->listen(function ($clientId, $message) use ($io): void {
-        $io->writeln(trim($message));
-    });
+    $server->listen();
 };
 
 $run();

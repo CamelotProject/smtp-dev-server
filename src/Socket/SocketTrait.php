@@ -4,14 +4,7 @@ declare(strict_types=1);
 
 namespace Camelot\SmtpDevServer\Socket;
 
-use Camelot\SmtpDevServer\Enum\SmtpReply;
 use Psr\Log\LoggerInterface;
-
-use function fclose;
-use function feof;
-use function fwrite;
-use function stream_socket_get_name;
-use const PHP_EOL;
 
 trait SocketTrait
 {
@@ -25,6 +18,8 @@ trait SocketTrait
         $this->hostname = $hostname;
         $this->socket = $socket;
         $this->logger = $logger;
+
+        $this->init();
     }
 
     public function id(): int
@@ -40,6 +35,11 @@ trait SocketTrait
     public function open(): void
     {
         $this->logger?->info('Opening socket ' . (int) $this->socket);
+    }
+
+    public function write(null|string|\Stringable $response): void
+    {
+        fwrite($this->socket, (string) $response);
     }
 
     public function close(): void
@@ -60,10 +60,5 @@ trait SocketTrait
         return $this->socket;
     }
 
-    protected function respond(int|SmtpReply $code, string $delim, ?string $message = null): void
-    {
-        $code = $code instanceof SmtpReply ? $code->value : $code;
-        $this->logger?->debug('Transmitting', ['socket' => (int) $this->socket, 'data' => $message]);
-        fwrite($this->socket, "{$code}{$delim}{$message}" . PHP_EOL);
-    }
+    abstract protected function init(): void;
 }

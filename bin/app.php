@@ -10,7 +10,17 @@ use Symfony\Component\DependencyInjection\Dumper\PhpDumper;
 use Symfony\Component\Filesystem\Path;
 use Symfony\Component\Routing\DependencyInjection\RoutingResolverPass;
 
-return function (string $projectDir, bool $debug = true): SmtpDevCachedContainer {
+return function (bool $debug = true): SmtpDevCachedContainer {
+    if (is_file(dirname(__DIR__) . '/vendor/autoload.php')) {
+        $projectDir = dirname(__DIR__);
+        require_once $projectDir . '/vendor/autoload.php';
+    } elseif (is_file(dirname(__DIR__, 3) . '/autoload.php')) {
+        $projectDir = dirname(__DIR__, 3);
+        require_once $projectDir . '/autoload.php';
+    } else {
+        throw new LogicException('Composer autoload is missing. Try running "composer install".');
+    }
+
     $file = "{$projectDir}/var/cache/SmtpDevCachedContainer.php";
     $containerConfigCache = new ConfigCache($file, $debug);
 

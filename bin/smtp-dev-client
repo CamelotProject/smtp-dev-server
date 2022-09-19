@@ -7,21 +7,10 @@ use Symfony\Component\Console\Output\ConsoleOutput;
 use Symfony\Component\DependencyInjection\Container;
 
 $run = function (): void {
-    if (is_file(dirname(__DIR__) . '/vendor/autoload.php')) {
-        $baseDir = dirname(__DIR__);
-        require_once $baseDir . '/vendor/autoload.php';
-    } elseif (is_file(dirname(__DIR__, 3) . '/autoload.php')) {
-        $baseDir = dirname(__DIR__, 3);
-        require_once $baseDir . '/autoload.php';
-    } else {
-        throw new LogicException('Composer autoload is missing. Try running "composer install".');
-    }
-
     $builder = require_once __DIR__ . '/app.php';
     /** @var Container $container */
-    $container = $builder($baseDir);
+    $container = $builder();
     $command = $container->get(HttpServerCommand::class);
-
     $command->run(new ArgvInput(), new ConsoleOutput());
 };
 

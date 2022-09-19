@@ -25,7 +25,7 @@ final class MailboxController
     {
         $save = $request->query->get('save');
         if ($save) {
-            $email = $this->mailbox->save($save);
+            $email = $this->mailbox->read($save);
             $response = new Response($email);
             $response->headers->set('Content-Type', 'text/plain');
             $response->headers->set('Content-Length', (string) \strlen($email));

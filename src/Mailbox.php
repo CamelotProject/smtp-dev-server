@@ -52,7 +52,7 @@ final class Mailbox
         ];
     }
 
-    public function save(string $id): string
+    public function read(string $id): string
     {
         return file_get_contents(Path::join($this->spoolDir, "{$id}.eml"));
     }

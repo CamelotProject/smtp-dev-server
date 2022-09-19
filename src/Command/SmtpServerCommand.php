@@ -5,6 +5,8 @@ declare(strict_types=1);
 namespace Camelot\SmtpDevServer\Command;
 
 use Camelot\SmtpDevServer\Server;
+use Camelot\SmtpDevServer\Socket\ClientFactory;
+use Camelot\SmtpDevServer\Socket\SmtpSocket;
 use Psr\Log\LoggerInterface;
 use Symfony\Component\Console\Attribute\AsCommand;
 use Symfony\Component\Console\Command\Command;
@@ -19,37 +21,41 @@ use Symfony\Component\Console\Style\SymfonyStyle;
 )]
 class SmtpServerCommand extends Command
 {
+    private Server $server;
     private ?LoggerInterface $logger;
 
-    public function __construct(?LoggerInterface $logger = null)
+    public function __construct(Server $server, ?LoggerInterface $logger = null)
     {
         parent::__construct();
+        $this->server = $server;
         $this->logger = $logger;
     }
 
     protected function configure(): void
     {
         $this
-            ->addOption('ip', 'i', InputOption::VALUE_REQUIRED, 'TCP/IP address', 'localhost')
-            ->addOption('port', 'p', InputOption::VALUE_REQUIRED, 'Port', 2525)
+            ->addArgument('backing', InputOption::VALUE_REQUIRED, 'Storage type (null, memory, mailbox)', 'mailbox')
+            ->addOption('ip', 'i', InputOption::VALUE_REQUIRED, 'TCP/IP address', '127.0.0.1')
+            ->addOption('port', 'p', InputOption::VALUE_REQUIRED, 'SMTP port', 2525)
+            ->addOption('help', 'h', InputOption::VALUE_NONE, 'Show help')
         ;
     }
 
     protected function execute(InputInterface $input, OutputInterface $output): int
     {
-        $ip = $input->getOption('ip');
+        $io = new SymfonyStyle($input, $output);
+        $host = $input->getOption('ip');
         $port = $input->getOption('port');
 
-        $io = new SymfonyStyle($input, $output);
-        $io->title("Starting SMTP server on {$ip} {$port}");
+        $io->title('Starting HTTP server');
+        $io->listing(["Host:\t{$host}", "Port:\t{$port}"]);
 
-        $server = new Server($ip, $port, $this->logger);
-        $server->start();
-        $io->info('Waiting for connections …');
+        $clientFactory = new ClientFactory($host, $port, SmtpSocket::class, $this->logger);
 
-        $server->listen(function ($clientId, $message) use ($output): void {
-            $output->writeln(trim($message));
-        });
+        $this->server->start($clientFactory, $output);
+        $io->info('Waiting for SMTP connections');
+
+        $this->server->listen();
 
         return Command::SUCCESS;
     }

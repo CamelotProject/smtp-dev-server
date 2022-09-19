@@ -1,0 +1,52 @@
+<!DOCTYPE html>
+<html lang='en'>
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <meta http-equiv="X-UA-Compatible" content="ie=edge">
+    <title>Mailbox</title>
+    <link rel="shortcut icon" href="/asset/mailbox.svg">
+    <link rel="stylesheet" type="text/css" href="/asset/bulma.min.css" media="screen">
+    <link rel="stylesheet" type="text/css" href="/asset/mailbox.css" media="screen">
+    <meta http-equiv="refresh" content="15">
+</head>
+<body>
+<section class='section container'>
+    <div class='columns'>
+        <div class='column content'>
+            <div class='is-flex'>
+                <a href='/'><img src="/asset/mailbox.svg" width="224" height="56" alt='Mailbox'></a>
+                <h1 class='title'>Mailbox Client</h1>
+            </div>
+            <div class='columns is-multiline'>
+                {% for id, email in emails %}
+                    <div class='column is-12 is-6-desktop'>
+                        <div class="card">
+                            <header class="card-header">
+                                <div class="card-header-title has-text-grey-lighter is-flex-direction-column is-align-items-flex-start">
+                                    <div class='is-flex-grow-1'>{{ email.headers.date }}</div>
+                                    <div>{{ id }}</div>
+                                </div>
+                            </header>
+                            <div class="card-content">
+                                <div class="content">
+                                    {% if email.html %}
+                                        {{ email.html|raw }}
+                                    {% else %}
+                                        {{ email.text|nl2br }}
+                                    {% endif %}
+                                </div>
+                            </div>
+                            <footer class="card-footer mb-5">
+                                <a href="/?save={{ id }}" class="card-footer-item">Save</a>
+                                <a href="/?delete={{ id }}" class="card-footer-item">Delete</a>
+                            </footer>
+                        </div>
+                    </div>
+                {% endfor %}
+            </div>
+        </div>
+    </div>
+</section>
+</body>
+</html>

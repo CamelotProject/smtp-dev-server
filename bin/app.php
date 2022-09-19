@@ -8,6 +8,7 @@ use Symfony\Component\DependencyInjection;
 use Symfony\Component\DependencyInjection\ContainerBuilder;
 use Symfony\Component\DependencyInjection\Dumper\PhpDumper;
 use Symfony\Component\Filesystem\Path;
+use Symfony\Component\Routing\DependencyInjection\RoutingResolverPass;
 
 return function (string $projectDir, bool $debug = true): SmtpDevCachedContainer {
     $file = "{$projectDir}/var/cache/SmtpDevCachedContainer.php";
@@ -19,6 +20,9 @@ return function (string $projectDir, bool $debug = true): SmtpDevCachedContainer
 
         $loader = new DependencyInjection\Loader\PhpFileLoader($containerBuilder, $locator);
         $loader->load('services/services.php');
+        $loader->load('services/routing.php');
+
+        $containerBuilder->addCompilerPass(new RoutingResolverPass());
 
         $containerBuilder->compile();
 

@@ -29,7 +29,8 @@ final class ClientFactory
     public function getHostAddress(): string
     {
         return match ($this->socketClass) {
-            HttpSocket::class => 'tcp://' . $this->hostname . ':' . $this->port,
+            HttpSocket::class,
+            SmtpSocket::class => 'tcp://' . $this->hostname . ':' . $this->port,
             default => throw new \RuntimeException(sprintf('Unknown client socket class %s', $this->socketClass)),
         };
     }
@@ -38,6 +39,7 @@ final class ClientFactory
     {
         $logger ??= $this->logger;
         return match ($this->socketClass) {
+            HttpSocket::class => $this->createHttpClient($socket, $logger),
             SmtpSocket::class => $this->createSmtpClient($socket, $logger),
             default => throw new \RuntimeException(sprintf('Unknown client socket class %s', $this->socketClass)),
         };
@@ -46,6 +48,14 @@ final class ClientFactory
     private function createSmtpClient($socket, ?LoggerInterface $logger): SmtpSocket
     {
         $client = new SmtpSocket($this->hostname, $socket, $logger);
+        $client->open();
+
+        return $client;
+    }
+
+    private function createHttpClient($socket, ?LoggerInterface $logger): HttpSocket
+    {
+        $client = new HttpSocket($this->hostname, $socket, $logger);
         $client->open();
 
         return $client;

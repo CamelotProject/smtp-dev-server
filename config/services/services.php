@@ -59,12 +59,19 @@ return static function (ContainerConfigurator $configurator): void {
     $services->set(StreamHandler::class)
         ->args(['%kernel.project_dir%/var/log/app.log'])
     ;
+
+    $services->set('monolog.logger_prototype', Logger::class)
+        ->abstract()
+    ;
+
     $services->set('logger', Logger::class)
+        ->parent('monolog.logger_prototype')
         ->args(['app'])
         ->call('pushHandler', [service(StreamHandler::class)])
         ->alias(Logger::class, LoggerInterface::class)
         ->alias(Logger::class, 'logger')
         ->alias(Logger::class, 'monolog.logger')
+        ->private()
     ;
 
     $services->set('monolog.handler.stream.smtp', StreamHandler::class)
@@ -75,10 +82,12 @@ return static function (ContainerConfigurator $configurator): void {
     ;
 
     $services->set('monolog.logger.smtp', Logger::class)
+        ->call('pushHandler', [service('monolog.handler.stream.smtp')])
         ->tag('monolog.logger', ['channel' => 'smtp'])
         ->args(['smtp'])
     ;
     $services->set('monolog.logger.http', Logger::class)
+        ->call('pushHandler', [service('monolog.handler.stream.http')])
         ->tag('monolog.logger', ['channel' => 'smtp'])
         ->args(['http'])
     ;
@@ -124,11 +133,13 @@ return static function (ContainerConfigurator $configurator): void {
     $services->alias(Storage\StorageInterface::class, Storage\MailboxStorage::class);
 
     $services->set('server.smtp', Server::class)
-        ->args([service(EventDispatcherInterface::class), service('monolog.logger.smtp')])
+        ->arg('$dispatcher', service(EventDispatcherInterface::class))
+        ->arg('$logger', service('monolog.logger.smtp'))
     ;
 
     $services->set('server.http', Server::class)
-        ->args([service(EventDispatcherInterface::class), service('monolog.logger.smtp')])
+        ->arg('$dispatcher', service(EventDispatcherInterface::class))
+        ->arg('$logger', service('monolog.logger.http'))
     ;
 
     $services->set(Mailbox::class)
@@ -137,13 +148,15 @@ return static function (ContainerConfigurator $configurator): void {
     ;
 
     $services->set(Command\SmtpServerCommand::class)
-        ->args([service('server.smtp'), service('monolog.logger.smtp')])
+        ->arg('$server', service('server.smtp'))
+        ->arg('$logger', service('monolog.logger.smtp'))
         ->tag('console.command')
         ->public()
     ;
 
     $services->set(Command\HttpServerCommand::class)
-        ->args([service('server.http'), service('monolog.logger.http')])
+        ->arg('$server', service('server.http'))
+        ->arg('$logger', service('monolog.logger.http'))
         ->tag('console.command')
         ->public()
     ;

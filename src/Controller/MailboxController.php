@@ -47,6 +47,7 @@ final class MailboxController
             ->setPrivate()
             ->setContent($this->twig->render('base.html.twig', [
                 'emails' => $emails,
+                'refresh' => $request->query->get('refresh', 15),
             ]))
         ;
 

@@ -1,7 +1,7 @@
 {
     "name": "camelot/smtp-dev-server",
     "description": "Development SMTP fake server",
-    "keywords": ["SMTP", "server", "testing"],
+    "keywords": ["SMTP", "server", "testing", "MIME", "RFC822", "RFC2822", "mild-insanity"],
     "license": "MIT",
     "type": "library",
     "authors": [

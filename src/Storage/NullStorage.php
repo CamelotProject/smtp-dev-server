@@ -4,8 +4,6 @@ declare(strict_types=1);
 
 namespace Camelot\SmtpDevServer\Storage;
 
-use function sprintf;
-
 /**
  * Send messages to /dev/null for safekeeping.
  */

@@ -1,0 +1,70 @@
+{% block email %}
+    <div class='card'>
+        {{ block('headers') }}
+        <div class='card-content'>
+            <div class='tabs is-flex-direction-column'>
+                <ul class='tabs-header'>
+                    <li class='tab-html {{ email.html ? 'is-active' : 'is-disabled' }}'><a>HTML</a></li>
+                    <li class='tab-text {{ email.text ? '' : 'is-disabled' }}{{ email.html ? '' : 'is-active' }}'><a>Text</a></li>
+                </ul>
+                <ul class='tabs-content content'>
+                    <li class='tab-content tab-content-html is-flex-grow-1 {{ email.html ? '' : 'is-hidden' }}'>
+                        {{ email.html|raw }}
+                    </li>
+                    <li class='tab-content tab-content-text is-flex-grow-1 {{ email.html ? 'is-hidden' : 'is-active' }}'>
+                        {{ email.text|nl2br }}
+                    </li>
+                </ul>
+            </div>
+            <div class='attachments'>
+                {% for attachment in email.attachments %}
+                    {{ block('attachment') }}
+                {% endfor %}
+            </div>
+        </div>
+        {{ block('footer') }}
+    </div>
+{% endblock %}
+
+{% block headers %}
+    <header class='card-header'>
+            <pre class='card-header-title'>
+                <table class='table is-narrow is-fullwidth'>
+                    <tbody>
+                     <tr>{% with { name: 'Date', value: email.headers.date } %}{{ block('header') }}{% endwith %}</tr>
+                    {% for name, value in email.headers %}
+                        <tr>{% set name = name|lower %}{% if name != 'date' and name != 'message-id' %}{{ block('header') }}{% endif %}</tr>
+                    {% endfor %}
+                     <tr>{% with { name: 'Message ID', value: id } %}{{ block('header') }}{% endwith %}</tr>
+                    </tbody>
+                </table>
+                {% if id in new %}{{ block('new_email') }}{% endif %}
+            </pre>
+    </header>
+{% endblock %}
+
+{% block header %}
+    {%- if name == 'to' or name == 'cc' %}{% set values = value|split(',') %}{% else %}{% set values = [value] %}{% endif -%}
+    <th>{{ name|replace({'-': ' '})|title }}</th>
+    <td>{% for v in values %}{{ v|trim }}{% if not loop.last %}<br/>{% endif %}{% endfor %}</td>
+{% endblock %}
+
+{% block icon %}<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512"><path d="M48 64C21.5 64 0 85.5 0 112c0 15.1 7.1 29.3 19.2 38.4L236.8 313.6c11.4 8.5 27 8.5 38.4 0L492.8 150.4c12.1-9.1 19.2-23.3 19.2-38.4c0-26.5-21.5-48-48-48H48zM0 176V384c0 35.3 28.7 64 64 64H448c35.3 0 64-28.7 64-64V176L294.4 339.2c-22.8 17.1-54 17.1-76.8 0L0 176z"/></svg>{% endblock %}
+
+{% block new_email %}<button class='card-header-icon'><span class='icon'>{{ block('icon') }}</span></button>{% endblock %}
+
+{% block attachment %}
+    <a href='/attachment/{{ id }}/{{ attachment.filename }}'>
+        <figure class='image'>
+            <img src='/asset/icon/{{ attachment_icon(attachment) }}'>
+            <figcaption>{{ attachment.filename }}</figcaption>
+        </figure>
+    </a>
+{% endblock %}
+
+{% block footer %}
+    <footer class='card-footer mb-5'>
+        <a href='/?save={{ id }}' class='card-footer-item'>Save</a>
+        <a href='/?delete={{ id }}{{ refreshing ? '' : '&refresh=-1' }}' class='card-footer-item'>Delete</a>
+    </footer>
+{% endblock %}

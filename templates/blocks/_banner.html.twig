@@ -1,0 +1,45 @@
+{% block banner %}
+    <div class='is-flex'>
+        <a href='/{{ refreshing ? '?refresh=15' : '' }}'><img src="/asset/mailbox.svg" width="224" height="56" alt='Mailbox'></a>
+        <div class='is-flex is-flex-direction-column is-flex-grow-1'>
+            <h1 class='title'>Mailbox Client</h1>
+            {{ block('controls') }}
+        </div>
+    </div>
+{% endblock %}
+
+{% block controls %}
+    <div class="field is-grouped">
+        <div class="field is-grouped is-flex-grow-1">
+            <p class="control">
+                <a href='/{{ refreshing ? '' : '?refresh=15' }}'>
+                    <button class='button is-{{ refreshing ? 'warning' : 'success' }}' type='button'>{{ refreshing ? 'Disable' : 'Enable' }} auto-refresh</button>
+                </a>
+            </p>
+        </div>
+
+        <form class="field is-grouped is-horizontal" method='post'>
+            <p class="control">
+                <button name='flush-older' type='submit' class="button is-warning">
+                    Flush older than
+                </button>
+            </p>
+            <div class="control">
+                <div class="select">
+                    <select name='flush-older-than'>
+                        <option value='1'>1 hour</option>
+                        <option value='2'>2 hours</option>
+                        <option value='6'>6 hours</option>
+                        <option value='12'>12 hours</option>
+                        <option value='24'>24 hours</option>
+                    </select>
+                </div>
+            </div>
+            <p class="control">
+                <button type='submit' name='flush-all' class="button is-danger">
+                    Flush spool
+                </button>
+            </p>
+        </form>
+    </div>
+{% endblock %}

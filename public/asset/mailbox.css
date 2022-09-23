@@ -1,3 +1,66 @@
-.card-content .content {
-    overflow-wrap: break-word;
+pre {
+    white-space: break-spaces;
+}
+
+.card-header-icon {
+    z-index: 10;
+    position: absolute;
+    top: -20px;
+    left: -25px;
+}
+
+.card-header-icon .icon svg path {
+    fill: rgba(255, 160, 122, 0.9);
+}
+
+.card-header-title {
+    padding: 0.5rem;
+}
+
+.card-header-title .table {
+    background-color: unset;
+}
+
+.card-header-title .table tr td {
+    font-weight: lighter;
+}
+
+.tabs-header > li.is-disabled > a {
+    color: #dbdbdb !important;
+}
+
+.tabs {
+    white-space: normal;
+    overflow-wrap: anywhere;
+}
+
+.tab-content {
+    padding-top: 1.5rem;
+    padding-bottom: 1.5rem;
+    -webkit-user-select: text;
+    -ms-user-select: text;
+    user-select: text;
+}
+
+.tab-content > a {
+    padding: 0;
+    margin-bottom: 1em;
+    border: unset;
+    text-decoration-line: underline;
+}
+
+.attachments {
+    display: flex;
+}
+
+.attachments .image {
+    display: flex;
+    flex-direction: column;
+    max-width: 256px;
+    padding-left: 1rem;
+    padding-right: 1rem;
+}
+
+.attachments .image img {
+    max-height: 32px;
 }

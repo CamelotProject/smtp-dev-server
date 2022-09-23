@@ -2,7 +2,6 @@
 
 declare(strict_types=1);
 
-use Camelot\SmtpDevServer\Controller;
 use Symfony\Component\Config\FileLocator;
 use Symfony\Component\Config\Loader\DelegatingLoader;
 use Symfony\Component\Config\Loader\LoaderResolver;
@@ -13,6 +12,7 @@ use Symfony\Component\HttpKernel\Controller\ArgumentResolverInterface;
 use Symfony\Component\HttpKernel\Controller\ContainerControllerResolver;
 use Symfony\Component\HttpKernel\Controller\ControllerResolverInterface;
 use Symfony\Component\HttpKernel\ControllerMetadata\ArgumentMetadataFactory;
+use Symfony\Component\HttpKernel\EventListener\RouterListener;
 use Symfony\Component\Routing;
 use Symfony\Component\Routing\Generator\CompiledUrlGenerator;
 use Symfony\Component\Routing\Generator\Dumper\CompiledUrlGeneratorDumper;
@@ -24,6 +24,7 @@ use Symfony\Component\Routing\RequestContext;
 use Symfony\Component\Routing\RequestContextAwareInterface;
 use Symfony\Component\Routing\Router;
 use Symfony\Component\Routing\RouterInterface;
+
 use function Symfony\Component\DependencyInjection\Loader\Configurator\param;
 use function Symfony\Component\DependencyInjection\Loader\Configurator\service;
 
@@ -127,13 +128,11 @@ return static function (ContainerConfigurator $configurator): void {
         ->alias(RequestContext::class, 'router.request_context')
     ;
 
-    $services->set(Controller\MailboxController::class)
-        ->tag('controller.service_arguments')
-        ->public()
+    $services->set(RouterListener::class)
+        ->arg('$matcher', service('router'))
     ;
 
-    $services->set(Controller\AssetController::class)
-        ->tag('controller.service_arguments')
-        ->public()
+    $services->get('event_dispatcher')
+        ->call('addSubscriber', [service(RouterListener::class)])
     ;
 };

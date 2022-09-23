@@ -4,162 +4,187 @@ declare(strict_types=1);
 
 namespace Camelot\SmtpDevServer\Event;
 
-use const PHP_EOL;
-
-use Camelot\SmtpDevServer\Enum\SmtpReply;
-use Camelot\SmtpDevServer\Request\SmtpRequest;
+use Camelot\SmtpDevServer\Enum\Scheme;
+use Camelot\SmtpDevServer\Enum\SmtpResponseCode;
+use Camelot\SmtpDevServer\Enum\SocketAction;
+use Camelot\SmtpDevServer\Exception\SmtpNegotiationException;
+use Camelot\SmtpDevServer\Exception\SmtpSyntaxException;
+use Camelot\SmtpDevServer\Helper;
+use Camelot\SmtpDevServer\Request\SmtpNegotiation;
+use Camelot\SmtpDevServer\Request\SmtpNegotiations;
+use Camelot\SmtpDevServer\Response\SmtpResponse;
+use Camelot\SmtpDevServer\Response\SmtpResponseFactory;
 use Camelot\SmtpDevServer\Storage\StorageInterface;
 use Psr\Log\LoggerInterface;
+use Stringable;
 use Symfony\Component\EventDispatcher\EventSubscriberInterface;
-
-use function preg_match;
-use function trim;
 
 final class SmtpEventListener implements EventSubscriberInterface
 {
+    private const emailRegex = '[\w\d.!#$%&\'*+\\/=?^_`{|}~-]+@[\w\d](?:[\w\d-]{0,61}[\w\d])?(?:\.[\w\d](?:[\w\d-]{0,61}[\w\d])?)+';
+
     private StorageInterface $storage;
     private ?LoggerInterface $logger;
-    /** @var SmtpRequest[] */
-    private array $pending = [];
-    private array $receivingData = [];
+    private SmtpNegotiations $negotiations;
     private int $messageCount = 0;
 
     public function __construct(StorageInterface $storage, LoggerInterface $logger = null)
     {
         $this->storage = $storage;
         $this->logger = $logger;
+        $this->negotiations = new SmtpNegotiations();
     }
 
     public static function getSubscribedEvents(): array
     {
         return [
-            SmtpEvent::class => 'handleMessage',
+            SocketAction::connect->name => 'connect',
+            SocketAction::buffer->name => 'buffer',
+            SocketAction::disconnect->name => 'disconnect',
         ];
     }
 
-    public function handleMessage(SmtpEvent $event): void
+    public function connect(SocketEvent $event): void
     {
-        $message = $event->getMessage();
+        if ($event->getScheme() === Scheme::SMTP) {
+            $this->negotiations->add($event, new SmtpNegotiation());
+            $event->setResponse(SmtpResponseFactory::ready($event->getAddressInfo()->getAddress()));
+            $event->dispatch();
+        }
+    }
+
+    public function buffer(SocketEvent $event): void
+    {
+        if ($event->getScheme() === Scheme::SMTP) {
+            $this->process($event, $event->getBuffer());
+        }
+    }
+
+    public function disconnect(SocketEvent $event): void
+    {
+        if ($event->getScheme() !== Scheme::SMTP) {
+            return;
+        }
+
+        if ($this->negotiations->has($event)) {
+            $this->negotiations->remove($event);
+        }
+    }
+
+    private function process(SocketEvent $event, null|string|Stringable $buffer): void
+    {
+        if ($this->negotiations->has($event) && $this->negotiations->get($event)->hasHeaders()) {
+            $this->dataStream($event, $buffer);
+
+            return;
+        }
+
+        $messages = Helper::bufferToLines($buffer);
+        foreach ($messages as $message) {
+            try {
+                $this->match($event, $message);
+            } catch (SmtpNegotiationException $e) {
+                $this->logger?->warning($e->getMessage());
+                $event->setResponse(SmtpResponseFactory::badSequenceOfCommands($e));
+                $event->dispatch();
+                break;
+            } catch (SmtpSyntaxException $e) {
+                $message = 'Syntax error, command unrecognized: ' . $e->getMessage();
+                $this->logger?->warning($message);
+                $event->setResponse(SmtpResponseFactory::syntaxError($message));
+                $event->dispatch();
+                break;
+            }
+        }
+    }
+
+    private function match(SocketEvent $event, ?string $message): void
+    {
+        $hostAddress = $event->getAddressInfo()->getAddress();
 
         match (1) {
-            preg_match('/^HELO\s+\[?([\d\w.-]+)]?\R/', $message, $matches) => $this->hello($event, $matches[1]),
-            preg_match('/^EHLO\s+\[?([\d\w.-]+)]?\R/', $message, $matches) => $this->eHello($event, $matches[1]),
-            preg_match('/^MAIL FROM:\s*(.+)\R/', $message, $matches) => $this->mailFrom($event, $matches[1]),
-            preg_match('/^RCPT TO:\s*(.+)\R/', $message, $matches) => $this->rcptTo($event, $matches[1]),
-            preg_match('/^NOOP\s*\R/', $message, $matches) => $this->ok($event),
-            preg_match('/^DATA\s*\R/', $message, $matches) => $this->data($event),
-            preg_match('/^QUIT\s*\R/', $message, $matches) => $this->quit($event),
-            preg_match('/^HELP\s*\R/i', $message, $matches) => $this->help($event),
-            default => $this->dataStream($event, $message),
+            preg_match('/^HELO\s+\[?([\d\w.-]+)]?$/u', $message, $matches) => $event->setResponse(SmtpResponseFactory::hello($hostAddress, $matches[1]))->dispatch(),
+            preg_match('/^EHLO\s+\[?([\d\w.-]+)]?$/u', $message, $matches) => $event->setResponse(SmtpResponseFactory::eHello($hostAddress, $matches[1]))->dispatch(),
+            preg_match('/^MAIL FROM:\s*<?(' . self::emailRegex . ')>?$/u', $message, $matches) => $this->mailFrom($event, $matches[1]),
+            preg_match('/^RCPT TO:\s*<?(' . self::emailRegex . ')>?$/u', $message, $matches) => $this->rcptTo($event, $matches[1]),
+            preg_match('/^DATA\s*$/u', $message, $matches) => $this->data($event),
+            preg_match('/^RSET\s*$/u', $message, $matches) => $this->reset($event),
+            preg_match('/^QUIT\s*$/u', $message, $matches) => $this->quit($event),
+            preg_match('/^NOOP\s*$/u', $message, $matches) => $event->setResponse(SmtpResponseFactory::ok())->dispatch(),
+            preg_match('/^HELP\s*$/ui', $message, $matches) => $event->setResponse(SmtpResponseFactory::help())->dispatch(),
+            preg_match('/^(RELAY|SEND|SOML|SAML|TLS|TURN)\s*$/u', $message, $matches) => $event->setResponse(SmtpResponseFactory::notImplemented($matches[1]))->dispatch(),
+            preg_match('/^\r\n$/u', $message) => $event->dispatch(),
+            default => $event->setResponse(SmtpResponseFactory::syntaxError())->dispatch(),
         };
     }
 
-    private function hello(SmtpEvent $event, ?string $callingHost): void
+    private function mailFrom(SocketEvent $event, ?string $address): void
     {
-        $this->respond($event, SmtpReply::RequestedMailActionOK, ' ', $event->getHostname() . ' Hello ' . $callingHost . ' [' . $event->getClient()->name() . ']');
+        $negotiation = $this->negotiations->get($event);
+        $negotiation->mailFrom($address);
+        $event->setResponse(SmtpResponseFactory::mailFrom());
+        $event->dispatch();
     }
 
-    private function eHello(SmtpEvent $event, ?string $callingHost): void
+    private function rcptTo(SocketEvent $event, ?string $address): void
     {
-        $this->respond($event, SmtpReply::RequestedMailActionOK, '-', $event->getHostname() . ' Hello ' . $callingHost . ' [' . $event->getClient()->name() . ']');
-        $this->respond($event, SmtpReply::RequestedMailActionOK, '-', 'SIZE 1000000');
-        $this->respond($event, SmtpReply::RequestedMailActionOK, ' ', 'AUTH PLAIN');
+        $this->negotiations->get($event)->rcptTo($address);
+        $event->setResponse(SmtpResponseFactory::rcptTo());
+        $event->dispatch();
     }
 
-    private function mailFrom(SmtpEvent $event, ?string $address): void
+    private function data(SocketEvent $event): void
     {
-        $request = $this->request($event->getClient()->id());
-        $request->headers->set('MAIL FROM', $address);
-        $this->ok($event);
+        $this->negotiations->get($event)->data();
+        $event->setResponse(SmtpResponse::create(SmtpResponseCode::StartMailInput, 'Send message content; end with <CRLF>.<CRLF>'));
+        $event->dispatch();
     }
 
-    private function rcptTo(SmtpEvent $event, ?string $addresses): void
+    private function dataStream(SocketEvent $event, null|string|Stringable $data): void
     {
-        $request = $this->request($event->getClient()->id());
-        $request->headers->set('RCPT TO', $addresses);
-        $this->ok($event);
-    }
-
-    private function data(SmtpEvent $event): void
-    {
-        $id = $event->getClient()->id();
-        if ($this->receivingData[$id] ?? false) {
-            $this->syntaxError($event);
-
+        if ($data === null) {
             return;
         }
-
-        $this->respond($event, SmtpReply::StartMailInput, ' ', 'Send message content; end with <CRLF>.<CRLF>');
-        $this->receivingData[$id] = true;
-    }
-
-    private function dataStream(SmtpEvent $event, ?string $data): void
-    {
-        if (!$this->receivingData) {
-            if (trim($data) !== '') {
-                $this->syntaxError($event, $data);
+        $data = "{$data}";
+        $negotiation = $this->negotiations->get($event);
+        if (!$negotiation->hasHeaders()) {
+            if (trim($data) === '') {
+                return;
             }
-
-            return;
+            throw new SmtpSyntaxException($data);
         }
-        $id = $event->getClient()->id();
-        $request = $this->request($id);
+
+        if (preg_match('#^(\X+)\R(\.)\R$#u', $data, $matches)) {
+            $negotiation->addContent($matches[1]);
+            $data = $matches[2];
+        } else {
+            $negotiation->addContent($data);
+        }
 
         if (trim($data) === '.') {
-            $this->receivingData[$id] = false;
-            unset($this->pending[$id]);
-            $this->storage->add($request->getContent());
-
-            $this->ok($event, 'message accepted for delivery: queued as ' . $this->messageCount);
-
-            return;
+            $this->storage->add($negotiation->getContent());
+            $event->setResponse(SmtpResponseFactory::ok('message accepted for delivery: queued as ' . ++$this->messageCount));
+            $event->dispatch();
+            $negotiation->reset();
         }
-        $request->setContent($request->getContent() . $data);
     }
 
-    private function quit(SmtpEvent $event): void
+    private function reset(SocketEvent $event): void
     {
-        $this->respond($event, SmtpReply::ServiceClosing, ' ', 'So long, and thanks for all the messages');
-        $event->getClient()->close();
-    }
-
-    private function ok(SmtpEvent $event, string $message = null): void
-    {
-        $this->respond($event, SmtpReply::RequestedMailActionOK, ' ', trim('OK ' . $message));
-    }
-
-    private function help(SmtpEvent $event): void
-    {
-        $this->respond($event, SmtpReply::SystemStatusHelp, '-', 'Available commands');
-        $this->respond($event, SmtpReply::SystemStatusHelp, '-', 'HELP - This is what you get');
-        $this->respond($event, SmtpReply::SystemStatusHelp, '-', 'HELO - Start conversation wth a HELO');
-        $this->respond($event, SmtpReply::SystemStatusHelp, '-', 'EHLO - Start conversation wth a EHLO');
-        $this->respond($event, SmtpReply::SystemStatusHelp, '-', 'MAIL FROM:<sender@domain.tld>');
-        $this->respond($event, SmtpReply::SystemStatusHelp, '-', 'RCPT TO:<recipient@domain.tld>');
-        $this->respond($event, SmtpReply::SystemStatusHelp, '-', 'DATA');
-        $this->respond($event, SmtpReply::SystemStatusHelp, '-', 'QUIT - Terminate the connection');
-        $this->respond($event, SmtpReply::SystemStatusHelp, ' ', '');
-    }
-
-    private function syntaxError(SmtpEvent $event, string $data = null): void
-    {
-        $message = 'Syntax error, command unrecognized: ' . $data;
-        $this->logger?->warning($message);
-        $this->respond($event, SmtpReply::SyntaxErrorCommandUnrecognized, ' ', $message);
-    }
-
-    private function request(int $id): SmtpRequest
-    {
-        if ($this->pending[$id] ?? false) {
-            return $this->pending[$id];
+        if ($this->negotiations->has($event)) {
+            $this->negotiations->remove($event);
         }
-
-        return $this->pending[$id] = new SmtpRequest();
+        $event->dispatch();
+        $event->setResponse(SmtpResponseFactory::ok());
     }
 
-    private function respond(SmtpEvent $event, int|SmtpReply $code, string $delim, ?string $message = null): void
+    private function quit(SocketEvent $event): void
     {
-        $code = $code instanceof SmtpReply ? $code->value : $code;
-        $event->setResponse("{$code}{$delim}{$message}" . PHP_EOL);
+        if ($this->negotiations->has($event)) {
+            $this->negotiations->remove($event);
+        }
+        $event->setResponse(SmtpResponseFactory::quit());
+        $event->dispatch();
+        $event->disconnect();
     }
 }

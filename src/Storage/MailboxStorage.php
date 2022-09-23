@@ -5,7 +5,6 @@ declare(strict_types=1);
 namespace Camelot\SmtpDevServer\Storage;
 
 use Camelot\SmtpDevServer\Helper;
-use RuntimeException;
 use Symfony\Component\Filesystem\Exception\FileNotFoundException;
 use Symfony\Component\Filesystem\Filesystem;
 use Symfony\Component\Filesystem\Path;

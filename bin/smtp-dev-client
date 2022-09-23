@@ -2,17 +2,27 @@
 <?php
 
 use Camelot\SmtpDevServer\Command\HttpServerCommand;
+use Camelot\SmtpDevServer\DependencyInjection\Kernel;
+use Symfony\Component\Console\Command\HelpCommand;
 use Symfony\Component\Console\Input\ArgvInput;
 use Symfony\Component\Console\Output\ConsoleOutput;
-use Symfony\Component\DependencyInjection\Container;
 
-$run = function (): void {
-    $builder = require_once __DIR__ . '/app.php';
-    /** @var Container $container */
-    $container = $builder();
-    $command = $container->get(HttpServerCommand::class);
-    $command->run(new ArgvInput(), new ConsoleOutput());
+$run = function (): int {
+    require_once dirname(__DIR__) . '/config/bootstrap.php';
+    $kernel = new Kernel('dev', true);
+    $kernel->boot();
+    $command = $kernel->getContainer()->get(HttpServerCommand::class);
+
+    $input = new ArgvInput(null, $command->getDefinition());
+    if ($input->getOption('help')) {
+        $help = new HelpCommand();
+        $help->setCommand($command);
+
+        return $help->run($input, new ConsoleOutput());
+    }
+
+    return $command->run(new ArgvInput(), new ConsoleOutput());
 };
 
-$run();
+return $run();
 

@@ -4,158 +4,224 @@ declare(strict_types=1);
 
 namespace Camelot\SmtpDevServer;
 
-use ArrayObject;
-use Camelot\SmtpDevServer\Socket\ClientFactory;
-use Camelot\SmtpDevServer\Socket\ClientSocketInterface;
-use Camelot\SmtpDevServer\Socket\Socket;
-use Psr\Log\LoggerInterface;
-use RuntimeException;
-use Symfony\Component\Console\Output\OutputInterface;
+use Camelot\SmtpDevServer\Enum\Shutdown;
+use Camelot\SmtpDevServer\Enum\SocketAction;
+use Camelot\SmtpDevServer\Event\SocketEvent;
+use Camelot\SmtpDevServer\Event\SocketEventInterface;
+use Camelot\SmtpDevServer\Exception\InternalExceptionInterface;
+use Camelot\SmtpDevServer\Exception\ServerFatalRuntimeException;
+use Camelot\SmtpDevServer\Exception\ServerRuntimeException;
+use Camelot\SmtpDevServer\Exception\SocketException;
+use Camelot\SmtpDevServer\Output\ServerOutputInterface;
+use Camelot\SmtpDevServer\Socket\AddressInfo;
+use Camelot\SmtpDevServer\Socket\Connection;
+use Camelot\SmtpDevServer\Socket\Connections;
+use Camelot\SmtpDevServer\Socket\Listener;
+use Camelot\SmtpDevServer\Socket\Timeout;
 use Symfony\Component\EventDispatcher\EventDispatcherInterface;
+use Throwable;
 
 final class Server
 {
     private EventDispatcherInterface $dispatcher;
-    private ?LoggerInterface $logger;
+    private ?AddressInfo $addressInfo = null;
+    private ?Timeout $timeout = null;
+    private ?Listener $listener = null;
+    private ?Connections $connections = null;
+    private ?ServerOutputInterface $output = null;
 
-    private ?ClientFactory $clientFactory = null;
-    private ?string $address = null;
-    private ?string $hostname = null;
-    private ?OutputInterface $output;
-
-    /** @var null|resource */
-    private $socket;
-    /** @var ClientSocketInterface[] */
-    private array $sockets = [];
-
-    public function __construct(EventDispatcherInterface $dispatcher = null, LoggerInterface $logger = null)
+    public function __construct(EventDispatcherInterface $dispatcher)
     {
         $this->dispatcher = $dispatcher;
-        $this->logger = $logger;
     }
 
-    public function getAddress(): string
+    public function __destruct()
     {
-        return $this->address;
+        if ($this->running()) {
+            $this->connections?->close(Shutdown::Immediate);
+            $this->listener->close(Shutdown::Immediate);
+        }
     }
 
-    public function getHostname(): string
+    public function id(): ?string
     {
-        return $this->hostname;
+        return $this->listener->id();
     }
 
-    public function start(ClientFactory $clientFactory, OutputInterface $output): void
+    /**
+     * Start the server, i.e. create and bind to a listening socket.
+     *
+     * @throws SocketException if creating or binding of the socket fails
+     */
+    public function start(AddressInfo $addressInfo, Timeout $timeout, ServerOutputInterface $output): void
     {
-        if ($this->clientFactory) {
-            throw new \RuntimeException('Server already started.');
+        if ($this->listener) {
+            throw new ServerRuntimeException('Server already started.');
         }
 
-        $this->clientFactory = $clientFactory;
-        $this->address = $clientFactory->getHostAddress();
-        $this->hostname = $clientFactory->getHostname();
+        $listener = new Listener($addressInfo->getAddress(), $addressInfo->getPort());
+        $listener->setOutput($output);
+
+        $listener->open();
+        $connections = new Connections($output, $listener->bytes());
+
+        $this->addressInfo = $addressInfo;
+        $this->timeout = $timeout;
+        $this->listener = $listener;
+        $this->connections = $connections;
         $this->output = $output;
 
-        if (!$this->socket = stream_socket_server($this->address, $errorCode, $errorMessage)) {
-            throw new RuntimeException(sprintf('Server start failed on "%s": ', $this->address) . $errorMessage . ' ' . $errorCode);
-        }
-        $this->sockets[(int) $this->socket] = new Socket($this->hostname, $this->socket, $this->logger);
+        $this->output->startup($addressInfo);
     }
 
-    public function stop(): void
-    {
-        if ($this->socket) {
-            fclose($this->socket);
-        }
-
-        $this->clientFactory = null;
-        $this->address = null;
-        $this->hostname = null;
-        $this->output = null;
-        $this->socket = null;
-    }
-
-    /** Listen on the server port for new connections. */
+    /**
+     * Listen on the server port for new connections.
+     *
+     * @throws ServerRuntimeException      when the server has not already been started
+     * @throws ServerFatalRuntimeException when a fatal runtime exception is throw
+     * @throws Throwable                   when an exception occurs that isn't internally mitigated
+     */
     public function listen(): void
     {
-        if ($this->socket === null) {
-            throw new RuntimeException('Server not started yet.');
+        if ($this->listener === null) {
+            throw new ServerRuntimeException('Server not started yet.');
         }
 
-        while (true) {
-            $listeners = $this->listeners();
-            foreach ($listeners as $id => $socket) {
-                if ($this->socket === $socket) {
-                    $this->accept($socket, $listeners);
-                } else {
-                    $this->handle($id, $socket);
-                }
+        $this->listener->listen();
+        $this->output->listening($this->addressInfo, $this->listener->id());
+
+        while ($this->listener->closed() !== true) {
+            $read = $write = [$this->listener->socket(), ...$this->connections->sockets()];
+            if (!$read) {
+                continue;
             }
+
+            $select = @socket_select($read, $write, $except, $this->timeout->getSeconds(), $this->timeout->getMicroseconds());
+            if ($select === false) {
+                throw new SocketException('socket_select', $read); // FIXME is this right? Is this fails we probably want to exit everything
+            }
+
+            try {
+                $this->connect($read);
+            } catch (Throwable $e) {
+                $this->output->exception($e);
+                throw $e;
+            }
+
+            try {
+                $this->serve($read);
+            } catch (InternalExceptionInterface) {
+                continue;
+            }
+        }
+    }
+
+    /** Is the server running */
+    public function running(): bool
+    {
+        return $this->listener && !$this->listener->closed();
+    }
+
+    /** Stop the running server, shutdown open listener & connection sockets running in this instance. */
+    public function stop(Shutdown $shutdown): void
+    {
+        $this->output?->shutdown($this->addressInfo, $shutdown);
+
+        $this->connections?->close(Shutdown::Immediate);
+        $this->listener?->close(Shutdown::Immediate);
+
+        if ($shutdown->isFinal()) {
+            $this->output?->shutdownFinal($this->addressInfo, $this->listener, $this->connections, $shutdown);
+            $this->listener = null;
+            $this->connections = null;
         }
     }
 
     /**
-     * Accept a client connection and open the socket.
+     * Accept incoming connections.
      *
-     * @param resource $socket
+     * Exceptions throw here should terminate the server.
+     *
+     * @throws Throwable
      */
-    private function accept($socket, ArrayObject $listeners): void
+    private function connect(array $read): void
     {
-        $client = $this->clientFactory->createClient($socket);
-        $this->sockets[$client->id()] = $client;
-        $listeners[$client->id()] = $client->socket();
-        $this->output->writeln("--- [CONNECT] ({$client->id()}) {$client->name()}");
+        if ($this->listener->matches($read) === false) {
+            return;
+        }
+
+        $connection = $this->listener->accept();
+        $this->connections->add($connection);
+
+        $event = new SocketEvent($this->addressInfo, $connection, null);
+        $this->dispatch($event, SocketAction::connect);
+        $this->respond($connection, $event);
     }
 
-     /**
-      * Handle incoming client messages.
-      *
-      * @param resource $socket
-      */
-     private function handle(int $id, $socket): void
-     {
-         $client = $this->sockets[$id];
-         $clientId = $client->id();
-         $name = $client->name();
-
-         if (feof($socket)) {
-             unset($this->sockets[$id]);
-             $client->close();
-         } else {
-             $this->read($client);
-         }
-
-         if (!$client->isOpen()) {
-             $this->output->writeln("--- [DISCONNECT] ({$clientId}) {$name}");
-         }
-     }
-
-    private function read(ClientSocketInterface $client): void
+    /**
+     * Serve active connections.
+     *
+     * @throws Throwable for all uncaught exceptions making it here, and will cause the connection to be terminated
+     */
+    private function serve(array $read): void
     {
-        $event = $client->read();
-        $clientId = $client->id();
+        foreach ($this->connections->matching($read) as $active) {
+            try {
+                // Read the incoming client connection and formulate the response.
+                $buffer = $active->read();
+                $event = new SocketEvent($this->addressInfo, $active, $buffer);
+                $this->dispatch($event, SocketAction::buffer);
 
-        $this->output->write($event->getMessage());
-        $this->dispatcher->dispatch($event);
-
-        $response = $event->getResponse();
-        if ($response && $client->isOpen()) {
-            $this->logger?->debug('Transmitting', ['socket' => $clientId, 'data' => $response]);
-
-            $client->write($response);
-
-            if (!$event->stayAlive()) {
-                $client->close();
+                // Report on, and send response.
+                $this->output->request($buffer, $event);
+                $this->respond($active, $event);
+            } catch (Throwable $e) {
+                $this->output->exception($e);
+                $this->terminate($active, Shutdown::Immediate);
+                throw $e;
             }
         }
     }
 
-    private function listeners(): ArrayObject
+    /** Respond to the transaction request. */
+    private function respond(Connection $connection, SocketEventInterface $event): void
     {
-        $write = [];
-        $this->sockets = array_filter($this->sockets, fn ($c) => !$c->isEOF());
-        $listeners = array_map(fn ($c) => $c->socket(), $this->sockets);
-        stream_select($listeners, $write, $write, null);
+        if (!$event->shouldDispatch()) {
+            return;
+        }
 
-        return new ArrayObject($listeners);
+        $response = $event->getResponse();
+        if ($response !== null) {
+            $bytes = $connection->write("{$response}");
+            $this->output->response($response, $bytes, $event);
+        }
+
+        if ($event->shouldDisconnect()) {
+            $this->terminate($connection, Shutdown::Normal);
+        }
+    }
+
+    /** Terminate the connection. */
+    private function terminate(Connection $connection, Shutdown $shutdown): void
+    {
+        $event = new SocketEvent($this->addressInfo, $connection, null);
+        $this->dispatch($event, SocketAction::disconnect);
+
+        $this->connections->remove($connection, $shutdown);
+        $this->output?->stats($connection);
+        $this->output?->status($this->listener, $this->connections);
+    }
+
+    /** @throws Throwable */
+    private function dispatch(SocketEvent $event, SocketAction $action): void
+    {
+        try {
+            $this->output->dispatch($event, $action);
+            $this->dispatcher->dispatch($event, $action->name);
+        } catch (Throwable $e) {
+            $this->output->dispatched($e);
+            throw $e;
+        }
+        $this->output->dispatched();
     }
 }

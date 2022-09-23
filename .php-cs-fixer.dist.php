@@ -13,4 +13,5 @@ return Camelot\CsFixer\Config::create()
         '@PhpCsFixer:risky' => true,
     ])
     ->in('src')
+    ->in('tests')
 ;
